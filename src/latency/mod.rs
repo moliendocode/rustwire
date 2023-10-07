@@ -56,30 +56,57 @@ pub async fn test(url: &str, num_requests: usize) -> Result<(u128, usize), RustW
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mockito::Server;
 
     #[tokio::test]
     async fn test_latency_for_url() {
-        let url = "https://24pullrequests.com/users.json?page=2";
+        let mut server = Server::new();
+        let _mock = server
+            .mock("GET", "/users.json?page=2")
+            .with_status(200)
+            .with_body("mock body")
+            .create();
+
+        let url = &format!("{}/users.json?page=2", server.url());
         let result = test(url, 1).await;
+
         assert!(result.is_ok());
+        _mock.assert();
     }
 
     #[tokio::test]
     async fn test_invalid_url() {
-        let url = "https://this-is-clearly-an-invalid-url.xyz";
+        let mut server = Server::new();
+        let _mock = server
+            .mock("GET", "/this-is-clearly-an-invalid-url.xyz")
+            .with_status(404)
+            .create();
+
+        let url = &format!("{}/this-is-clearly-an-invalid-url.xyz", server.url());
         let result = test(url, 1).await;
 
         assert!(result.is_err());
+        _mock.assert();
     }
 
     #[tokio::test]
     async fn test_multiple_requests() {
-        let url = "https://24pullrequests.com/users.json?page=2";
+        let mut server = Server::new();
+        let _mock = server
+            .mock("GET", "/users.json?page=2")
+            .with_status(200)
+            .with_body("mock body")
+            .expect(2)
+            .create();
+
+        let url = &format!("{}/users.json?page=2", server.url());
         let result = test(url, 2).await;
         assert!(result.is_ok());
 
         let (avg_latency, errors) = result.unwrap();
-        assert!(avg_latency < 500000);
+        assert!(avg_latency < 500);
         assert_eq!(errors, 0);
+
+        _mock.assert();
     }
 }
