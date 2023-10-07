@@ -5,43 +5,35 @@ use futures::future::join_all;
 use std::time::Instant;
 
 pub async fn test(url: &str, num_requests: usize) -> Result<(u128, usize), RustWireError> {
-    let mut futures = Vec::with_capacity(num_requests);
-
-    for _ in 0..num_requests {
-        let url_clone = url.to_string();
-        let future = tokio::spawn(async move {
-            let start_time = Instant::now();
-            match http::get(&url_clone).await {
-                Ok(_val) => {
-                    println!("Success");
-                    Ok(start_time.elapsed().as_millis())
+    let futures = (0..num_requests)
+        .map(|_| {
+            let url_clone = url.to_string();
+            tokio::spawn(async move {
+                let start_time = Instant::now();
+                match http::get(&url_clone).await {
+                    Ok(_val) => {
+                        println!("Success");
+                        Ok(start_time.elapsed().as_millis())
+                    }
+                    Err(err) => {
+                        println!("Error: {}", err);
+                        Err(err)
+                    }
                 }
-                Err(err) => {
-                    println!("Error: {}", err);
-                    Err(err.clone())
-                }
-            }
-        });
-
-        futures.push(future);
-    }
+            })
+        })
+        .collect::<Vec<_>>();
 
     let futures_results: Vec<Result<Result<u128, RustWireError>, tokio::task::JoinError>> =
         join_all(futures).await;
-    let mut durations = Vec::new();
+
+    let mut total_duration: u128 = 0;
     let mut errors_count = 0;
 
-    for result in &futures_results {
+    for result in futures_results {
         match result {
-            Ok(inner_result) => match inner_result {
-                Ok(duration) => durations.push(*duration),
-                Err(_) => {
-                    errors_count += 1;
-                }
-            },
-            Err(_) => {
-                errors_count += 1;
-            }
+            Ok(Ok(duration)) => total_duration += duration,
+            Ok(Err(_)) | Err(_) => errors_count += 1,
         }
     }
 
@@ -55,8 +47,7 @@ pub async fn test(url: &str, num_requests: usize) -> Result<(u128, usize), RustW
         )));
     }
 
-    let total_duration: u128 = durations.iter().sum();
-    println!("Total duration: {}", total_duration);
+    println!("Total duration: {}ms", total_duration);
     println!("Errors count: {}", errors_count);
 
     Ok((total_duration / num_requests as u128, errors_count))
