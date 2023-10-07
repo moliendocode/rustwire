@@ -4,7 +4,12 @@ use crate::utils::http;
 use futures::future::join_all;
 use std::time::Instant;
 
-pub async fn test(url: &str, num_requests: usize) -> Result<(u128, usize), RustWireError> {
+pub async fn test(
+    url: &str,
+    num_requests: usize,
+    error_threshold: Option<f64>,
+) -> Result<(u128, usize), RustWireError> {
+    let threshold: f64 = error_threshold.unwrap_or(0.9);
     let futures = (0..num_requests)
         .map(|_| {
             let url_clone = url.to_string();
@@ -38,9 +43,8 @@ pub async fn test(url: &str, num_requests: usize) -> Result<(u128, usize), RustW
     }
 
     let error_rate = errors_count as f64 / num_requests as f64;
-    const ERROR_THRESHOLD: f64 = 0.9;
 
-    if error_rate > ERROR_THRESHOLD {
+    if error_rate > threshold {
         return Err(RustWireError::HttpError(format!(
             "Error rate of {:.2}% exceeds the threshold",
             error_rate * 100.0
@@ -68,7 +72,7 @@ mod tests {
             .create();
 
         let url = &format!("{}/users.json?page=2", server.url());
-        let result = test(url, 1).await;
+        let result = test(url, 1, None).await;
 
         assert!(result.is_ok());
         _mock.assert();
@@ -83,7 +87,7 @@ mod tests {
             .create();
 
         let url = &format!("{}/this-is-clearly-an-invalid-url.xyz", server.url());
-        let result = test(url, 1).await;
+        let result = test(url, 1, Some(0.1)).await;
 
         assert!(result.is_err());
         _mock.assert();
@@ -100,7 +104,7 @@ mod tests {
             .create();
 
         let url = &format!("{}/users.json?page=2", server.url());
-        let result = test(url, 2).await;
+        let result = test(url, 2, None).await;
         assert!(result.is_ok());
 
         let (avg_latency, errors) = result.unwrap();
