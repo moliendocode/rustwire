@@ -113,4 +113,31 @@ mod tests {
 
         _mock.assert();
     }
+
+    #[tokio::test]
+    async fn test_error_threshold() {
+        let mut server = Server::new();
+
+        for _ in 0..3 {
+            server
+                .mock("GET", "/threshold-test")
+                .with_status(200)
+                .with_body("mock success body")
+                .create();
+        }
+
+        for _ in 0..2 {
+            server
+                .mock("GET", "/threshold-test")
+                .with_status(404)
+                .with_body("mock error body")
+                .create();
+        }
+
+        let url = &format!("{}/threshold-test", server.url());
+
+        let result = test(url, 5, Some(0.3)).await;
+
+        assert!(result.is_err());
+    }
 }
