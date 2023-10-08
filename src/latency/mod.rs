@@ -1,5 +1,6 @@
 use crate::utils::error::RustWireError;
 use crate::utils::http;
+use crate::utils::http::ProxyManager;
 
 use futures::future::join_all;
 use std::time::Instant;
@@ -8,14 +9,16 @@ pub async fn test(
     url: &str,
     num_requests: usize,
     error_threshold: Option<f64>,
+    proxy_manager: Option<&ProxyManager>,
 ) -> Result<(u128, usize), RustWireError> {
     let threshold: f64 = error_threshold.unwrap_or(0.9);
     let futures = (0..num_requests)
         .map(|_| {
             let url_clone = url.to_string();
+            let proxy_url = proxy_manager.map(|m| m.get_next().to_string());
             tokio::spawn(async move {
                 let start_time = Instant::now();
-                match http::get(&url_clone).await {
+                match http::get(&url_clone, proxy_url.as_deref()).await {
                     Ok(_val) => {
                         println!("Success");
                         Ok(start_time.elapsed().as_millis())
@@ -72,7 +75,7 @@ mod tests {
             .create();
 
         let url = &format!("{}/users.json?page=2", server.url());
-        let result = test(url, 1, None).await;
+        let result = test(url, 1, None, None).await;
 
         assert!(result.is_ok());
         _mock.assert();
@@ -87,7 +90,7 @@ mod tests {
             .create();
 
         let url = &format!("{}/this-is-clearly-an-invalid-url.xyz", server.url());
-        let result = test(url, 1, Some(0.1)).await;
+        let result = test(url, 1, Some(0.1), None).await;
 
         assert!(result.is_err());
         _mock.assert();
@@ -104,7 +107,7 @@ mod tests {
             .create();
 
         let url = &format!("{}/users.json?page=2", server.url());
-        let result = test(url, 2, None).await;
+        let result = test(url, 2, None, None).await;
         assert!(result.is_ok());
 
         let (avg_latency, errors) = result.unwrap();
@@ -136,7 +139,7 @@ mod tests {
 
         let url = &format!("{}/threshold-test", server.url());
 
-        let result = test(url, 5, Some(0.3)).await;
+        let result = test(url, 5, Some(0.3), None).await;
 
         assert!(result.is_err());
     }
