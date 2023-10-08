@@ -39,6 +39,7 @@ pub async fn get(url: &str, proxy_url: Option<&str>) -> Result<String, RustWireE
 
 pub struct ProxyManager {
     proxies: Vec<String>,
+    failures: Arc<AtomicUsize>,
     current: Arc<AtomicUsize>,
 }
 
@@ -46,26 +47,43 @@ impl ProxyManager {
     pub fn new(proxies: Vec<String>) -> Self {
         Self {
             proxies,
+            failures: Arc::new(AtomicUsize::new(0)),
             current: Arc::new(AtomicUsize::new(0)),
         }
     }
 
-    pub fn get_next(&self) -> &str {
+    pub fn get_next(&self) -> Option<&str> {
+        if self.failures.load(Ordering::Relaxed) > 3 {
+            return None;
+        }
+
         let index = self.current.fetch_add(1, Ordering::Relaxed) % self.proxies.len();
-        &self.proxies[index]
+        Some(&self.proxies[index])
+    }
+
+    pub fn mark_failure(&self) {
+        self.failures.fetch_add(1, Ordering::Relaxed);
     }
 }
 
-pub async fn get_with_proxies(url: &str, manager: &ProxyManager) -> Result<String, RustWireError> {
-    let mut attempts = manager.proxies.len();
+pub async fn get_with_proxies(
+    url: &str,
+    manager: &ProxyManager,
+    max_attempts: usize,
+) -> Result<String, RustWireError> {
+    let mut attempts = 0;
 
-    while attempts > 0 {
-        let proxy_url = manager.get_next();
-        let result = get(url, Some(proxy_url)).await;
-
-        match result {
-            Ok(body) => return Ok(body),
-            Err(_) => attempts -= 1,
+    while attempts < max_attempts {
+        if let Some(proxy_url) = manager.get_next() {
+            match get(url, Some(proxy_url)).await {
+                Ok(body) => return Ok(body),
+                Err(_) => {
+                    manager.mark_failure();
+                    attempts += 1;
+                }
+            }
+        } else {
+            break;
         }
     }
 

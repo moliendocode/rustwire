@@ -3,22 +3,30 @@ use crate::utils::http;
 use crate::utils::http::ProxyManager;
 
 use futures::future::join_all;
+use std::sync::Arc;
 use std::time::Instant;
 
 pub async fn test(
     url: &str,
     num_requests: usize,
     error_threshold: Option<f64>,
-    proxy_manager: Option<&ProxyManager>,
+    proxy_manager: Option<Arc<ProxyManager>>,
 ) -> Result<(u128, usize), RustWireError> {
     let threshold: f64 = error_threshold.unwrap_or(0.9);
     let futures = (0..num_requests)
         .map(|_| {
             let url_clone = url.to_string();
-            let proxy_url = proxy_manager.map(|m| m.get_next().to_string());
+            let manager_clone = proxy_manager.clone();
             tokio::spawn(async move {
                 let start_time = Instant::now();
-                match http::get(&url_clone, proxy_url.as_deref()).await {
+
+                let result = if let Some(manager) = manager_clone {
+                    http::get_with_proxies(&url_clone, &*manager, 3).await
+                } else {
+                    http::get(&url_clone, None).await
+                };
+
+                match result {
                     Ok(_val) => {
                         println!("Success");
                         Ok(start_time.elapsed().as_millis())
