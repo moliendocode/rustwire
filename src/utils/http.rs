@@ -89,3 +89,87 @@ pub async fn get_with_proxies(
 
     Err(RustWireError::HttpError("All proxies failed.".to_string()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockito::Server;
+
+    #[tokio::test]
+    async fn test_get_without_proxy() {
+        let mut server = Server::new();
+        let _mock = server
+            .mock("GET", "/test")
+            .with_status(200)
+            .with_body("test body")
+            .create();
+
+        let url = format!("{}/test", server.url());
+        let result = get(&url, None).await;
+        assert_eq!(result.unwrap(), "test body");
+    }
+
+    #[tokio::test]
+    async fn test_get_with_http_error() {
+        let mut server = Server::new();
+        let _mock = server.mock("GET", "/error").with_status(404).create();
+
+        let url = format!("{}/error", server.url());
+        let result = get(&url, None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_proxy_manager_new() {
+        let proxies = vec![
+            "http://localhost:8000".to_string(),
+            "http://localhost:8001".to_string(),
+        ];
+        let manager = ProxyManager::new(proxies.clone());
+        assert_eq!(manager.proxies, proxies);
+        assert_eq!(manager.failures.load(Ordering::Relaxed), 0);
+        assert_eq!(manager.current.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn test_proxy_manager_rotation() {
+        let manager = ProxyManager::new(vec![
+            "http://localhost:8000".to_string(),
+            "http://localhost:8001".to_string(),
+        ]);
+        assert_eq!(manager.get_next().unwrap(), "http://localhost:8000");
+        assert_eq!(manager.get_next().unwrap(), "http://localhost:8001");
+        assert_eq!(manager.get_next().unwrap(), "http://localhost:8000"); // It should rotate back
+    }
+
+    #[tokio::test]
+    async fn test_proxy_manager_mark_failure() {
+        let manager = ProxyManager::new(vec!["http://localhost:8000".to_string()]);
+        manager.mark_failure();
+        assert_eq!(manager.failures.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn test_proxy_manager_failure_limit() {
+        let manager = ProxyManager::new(vec!["http://localhost:8000".to_string()]);
+        for _ in 0..4 {
+            manager.mark_failure();
+        }
+        assert_eq!(manager.get_next(), None);
+    }
+
+    #[tokio::test]
+    async fn test_get_with_proxies_all_fail() {
+        let mut server = Server::new();
+        let _mock = server
+            .mock("GET", "/test")
+            .with_status(200)
+            .with_body("test body")
+            .create();
+
+        let manager = ProxyManager::new(vec!["http://invalid-proxy".to_string()]); // Invalid proxy for demonstration
+        let url = format!("{}/test", server.url());
+        let result = get_with_proxies(&url, &manager, 3).await;
+        assert!(result.is_err());
+    }
+}
